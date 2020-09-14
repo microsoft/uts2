@@ -2,13 +2,17 @@
  * Copyright (C) Microsoft Corporation. All rights reserved.
  *--------------------------------------------------------*/
 
+type InstantiatedMetrics<TMetrics extends TMetricMin> = {
+  [K in keyof TMetrics]: ReturnType<TMetrics[K]>;
+};
+
 /**
  * The Bin is used internally in the query system and holds analysis for
  * a group.
  */
-export class Bin {
-  private columns: string[];
-  private metrics: { [column: string]: Aggregate } = {};
+export class Bin<TMetrics extends TMetricMin, TGroup> {
+  private columns: (keyof TMetrics)[];
+  private metrics: InstantiatedMetrics<TMetrics>;
   private _size = 0;
 
   /**
@@ -17,11 +21,16 @@ export class Bin {
    * @param  {Object} group   arbitrary object describing the grouping of
    *                          the contained metrics.
    */
-  constructor(metrics: { [column: string]: () => Aggregate }, private group?: any) {
+  constructor(metrics: TMetrics, private readonly group: TGroup) {
     this.columns = Object.keys(metrics);
-    this.columns.forEach(col => {
-      this.metrics[col] = metrics[col]();
-    });
+
+    const instantiated: Partial<InstantiatedMetrics<TMetrics>> = {};
+    for (const col of this.columns) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      instantiated[col] = metrics[col]() as any;
+    }
+
+    this.metrics = instantiated as InstantiatedMetrics<TMetrics>;
   }
 
   /**
@@ -52,16 +61,17 @@ export class Bin {
    * Serializes the bin to a results object.
    * @return {Object}
    */
-  toObject(): BinResult {
-    const out: BinResult = { results: {} };
+  toObject(): BinResult<TMetrics, TGroup> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const out: any = { results: {} };
 
-    if (this.group) {
+    if (this.group !== undefined) {
       out.group = this.group;
     }
 
-    this.columns.forEach(col => {
+    for (const col of this.columns) {
       out.results[col] = this.metrics[col].serialize();
-    });
+    }
 
     return out;
   }
@@ -70,7 +80,7 @@ export class Bin {
 /**
  * Parent class of groupers.
  */
-export abstract class Group {
+export abstract class Group<TGroup> {
   protected _where: { [col: string]: Comparator | Comparator[] } = {};
 
   /**
@@ -95,13 +105,21 @@ export abstract class Group {
   /**
    * Returns a list of bins with points added to them.
    */
-  abstract binify(data: Point[], metrics: { [column: string]: () => Aggregate }): Bin[];
+  abstract binify<TMetrics extends TMetricMin>(
+    data: Point[],
+    metrics: TMetrics,
+  ): Bin<TMetrics, TGroup>[];
+}
+
+export interface IIntervalGroup {
+  start: number;
+  width: number;
 }
 
 /**
  * The IntervalGrouper groups data based on time.
  */
-class IntervalGrouper extends Group {
+class IntervalGrouper extends Group<IIntervalGroup> {
   /**
    * @param  {Number} interval the size, in milliseconds, of each group bin
    * @param  {Boolean} fill    whether to zero-fill bins that don't have data
@@ -110,7 +128,10 @@ class IntervalGrouper extends Group {
     super();
   }
 
-  binify(data: Point[], metrics: { [column: string]: () => Aggregate }): Bin[] {
+  binify<TMetrics extends TMetricMin>(
+    data: Point[],
+    metrics: TMetrics,
+  ): Bin<TMetrics, IIntervalGroup>[] {
     let start: number;
     const timeBound = this.getWhere('time').find(time => time.is === '>');
     if (timeBound) {
@@ -122,7 +143,7 @@ class IntervalGrouper extends Group {
     const { interval, now } = this;
     const count = Math.floor((now - start) / interval) + 1;
 
-    let bins = new Array<Bin>();
+    let bins = new Array<Bin<TMetrics, IIntervalGroup>>();
     for (let i = 0; i < count; i++) {
       bins.push(
         new Bin(metrics, {
@@ -153,9 +174,12 @@ class IntervalGrouper extends Group {
  * The AnyGrouper is the "base" grouper that just shoves all the data into
  * a single bin.
  */
-class AnyGrouper extends Group {
-  binify(data: Point[], metrics: { [column: string]: () => Aggregate }): Bin[] {
-    const bin = new Bin(metrics);
+class AnyGrouper extends Group<undefined> {
+  binify<TMetrics extends TMetricMin>(
+    data: Point[],
+    metrics: TMetrics,
+  ): Bin<TMetrics, undefined>[] {
+    const bin = new Bin(metrics, undefined);
     for (let i = 0; i < data.length; i++) {
       bin.push(data[i]);
     }
@@ -165,7 +189,7 @@ class AnyGrouper extends Group {
 }
 
 export type PointData = {
-  [column: string]: any;
+  [column: string]: number;
 };
 
 /**
@@ -175,8 +199,8 @@ export type PointData = {
 export class Point {
   /**
    * Creates a new point for insertion into a time series.
-   * @param  {Object} data
-   * @param  {[Number]} time insertion time in milliseconds
+   * @param data
+   * @param time insertion time in milliseconds
    */
   constructor(private data: PointData, time = Date.now()) {
     this.data['time'] = time;
@@ -186,9 +210,9 @@ export class Point {
    * Gets a property from the point, returning the default value if
    * it doens't exist.
    */
-  public get<T>(prop: string): T | undefined;
-  public get<T>(prop: string, defaultValue: T): T;
-  public get<T>(prop: string, defaultValue?: T): T {
+  public get(prop: string): number | undefined;
+  public get(prop: string, defaultValue: number): number;
+  public get(prop: string, defaultValue?: number): number | undefined {
     return this.has(prop) ? this.data[prop] : defaultValue;
   }
 
@@ -225,16 +249,18 @@ export type BinaryOperator = '>' | '<' | '=';
  */
 export interface Comparator {
   is: BinaryOperator;
-  than: any;
+  than: number;
 }
 
 /**
  * BinResults are returned from time series queries.
  */
-export interface BinResult {
-  group?: any;
-  results: { [column: string]: any };
+export interface BinResult<TMetrics extends TMetricMin, TGroup> {
+  group?: TGroup;
+  results: { [K in keyof TMetrics]: TMetrics[K] extends () => Aggregate<infer R> ? R : unknown };
 }
+
+type TMetricMin = { [col: string]: () => Aggregate<unknown> };
 
 /**
  * Series contains a logical grouping of results that can be aggregated.
@@ -273,7 +299,7 @@ export class Series {
    * Inserts new data into the series at the specified time,
    * defaulting to the current time if not provided.
    */
-  public insert(data: any, time?: number) {
+  public insert(data: Point | PointData, time?: number) {
     this.data.push(data instanceof Point ? data : new Point(data, time));
     return this;
   }
@@ -297,7 +323,7 @@ export class Series {
         const value = comp.than;
 
         return (pt: Point): boolean => {
-          const v = pt.get<number>(col);
+          const v = pt.get(col);
           if (v === undefined) {
             return false;
           }
@@ -369,16 +395,15 @@ export class Series {
    *     // ...
    *   }]
    */
-  public query(options: {
-    metrics: { [col: string]: () => Aggregate };
+  public query<TMetrics extends TMetricMin, TGroup = undefined>(options: {
+    metrics: TMetrics;
     where?: { [col: string]: Comparator | Comparator[] };
-    group?: Group;
-  }): BinResult[] {
+    group?: Group<TGroup>;
+  }): BinResult<TMetrics, TGroup>[] {
     options.where = options.where || {};
-    options.group = options.group || new AnyGrouper();
+    options.group = options.group || ((new AnyGrouper() as unknown) as Group<TGroup>);
 
     const data = this.data.filter(this.buildComparator(options.where));
-
     return options.group
       .where(options.where)
       .binify(data, options.metrics)
@@ -394,7 +419,7 @@ export class Series {
   }
 }
 
-export interface Aggregate {
+export interface Aggregate<R> {
   /**
    * Adds a new point to the aggregate.
    */
@@ -403,33 +428,33 @@ export interface Aggregate {
   /**
    * Returns the aggregate's result for returning in the query results.
    */
-  serialize(): any;
+  serialize(): R;
 }
 
-class Mapper implements Aggregate {
-  private data = new Array<any>();
+class Mapper<R> implements Aggregate<R[]> {
+  private readonly data: R[] = [];
 
   /**
    * Mapper returns the results of a mapping function on the points.
    */
-  constructor(private fn: (pt: Point) => any) {}
+  constructor(private fn: (pt: Point) => R) {}
 
   public push(pt: Point) {
     this.data.push(this.fn(pt));
   }
 
-  public serialize() {
+  public serialize(): R[] {
     return this.data;
   }
 }
 
-class Reducer<T> implements Aggregate {
-  private result: T;
+class Reducer<R> implements Aggregate<R> {
+  private result: R;
 
   /**
    * Mapper returns the results of a mapping function on the points.
    */
-  constructor(private fn: (current: T, pt: Point) => T, initial: T) {
+  constructor(private fn: (current: R, pt: Point) => R, initial: R) {
     this.result = initial;
   }
 
@@ -442,7 +467,7 @@ class Reducer<T> implements Aggregate {
   }
 }
 
-class Average implements Aggregate {
+class Average implements Aggregate<number> {
   private sum = 0;
   private count = 0;
 
@@ -453,7 +478,7 @@ class Average implements Aggregate {
 
   public push(pt: Point) {
     if (pt.has(this.column)) {
-      this.sum += pt.get<number>(this.column, 0);
+      this.sum += pt.get(this.column, 0);
       this.count += 1;
     }
   }
@@ -463,7 +488,7 @@ class Average implements Aggregate {
   }
 }
 
-class Derivative implements Aggregate {
+class Derivative implements Aggregate<Point[]> {
   private lastChange = 0;
   private lastValue?: number;
   private lastTime?: number;
@@ -477,8 +502,8 @@ class Derivative implements Aggregate {
   constructor(private column: string, private interval: number) {}
 
   public push(pt: Point) {
-    const value = pt.get<number>(this.column);
-    if (!value) {
+    const value = pt.get(this.column);
+    if (value === undefined) {
       return;
     }
 
@@ -565,15 +590,19 @@ export class TSDB {
    * returning the mapping results. If the `mapper` is a string, it'll
    * extract the specified column from the results, lodash style.
    */
-  public static map(mapper: string | ((pt: Point) => any)): () => Aggregate {
-    let fn: (pt: Point) => any;
+  public static map(mapper: string): () => Aggregate<(number | undefined)[]>;
+  public static map<T = number>(mapper: (pt: Point) => T): () => Aggregate<T[]>;
+  public static map<T = number>(
+    mapper: string | ((pt: Point) => T),
+  ): () => Aggregate<(T | undefined)[]> {
+    let fn: (pt: Point) => T | number | undefined;
     if (typeof mapper === 'function') {
       fn = mapper;
     } else {
       fn = pt => pt.get(mapper);
     }
 
-    return () => new Mapper(fn);
+    return () => new Mapper(fn) as Aggregate<(T | undefined)[]>;
   }
 
   /**
@@ -581,28 +610,28 @@ export class TSDB {
    * returning the mapping results. If the `mapper` is a string, it'll
    * extract the specified column from the results, lodash style.
    */
-  public static reduce<T>(fn: (current: T, pt: Point) => T, initial: T): () => Aggregate {
+  public static reduce<T>(fn: (current: T, pt: Point) => T, initial: T): () => Aggregate<T> {
     return () => new Reducer(fn, initial);
   }
 
   /**
    * Creates a mean metric analysis passed into Series.Query
    */
-  public static mean(column: string): () => Aggregate {
+  public static mean(column: string): () => Aggregate<number> {
     return () => new Average(column);
   }
 
   /**
    * Creates a max metric analysis passed into Series.Query
    */
-  public static max(column: string): () => Aggregate {
+  public static max(column: string): () => Aggregate<number> {
     return this.reduce((max, pt) => Math.max(pt.get(column, -Infinity), max), 0);
   }
 
   /**
    * Creates a min metric analysis passed into Series.Query
    */
-  public static min(column: string): () => Aggregate {
+  public static min(column: string): () => Aggregate<number> {
     return this.reduce((min, pt) => Math.min(pt.get(column, Infinity), min), 0);
   }
 
@@ -610,7 +639,7 @@ export class TSDB {
    * Creates an analysis which returns points that plot changes in a column,
    * within a specified interval.
    */
-  public static derivative(column: string, interval: number): () => Aggregate {
+  public static derivative(column: string, interval: number): () => Aggregate<Point[]> {
     return () => new Derivative(column, interval);
   }
 
@@ -618,14 +647,14 @@ export class TSDB {
    * Creates an analysis that gets the most recent
    * value of the specified column.
    */
-  public static last(column: string): () => Aggregate {
-    return this.reduce((x, pt) => pt.get(column, null), null);
+  public static last(column: string): () => Aggregate<number | undefined> {
+    return this.reduce<number | undefined>((_, pt) => pt.get(column), undefined);
   }
 
   /**
    * Creates a sum metric analysis passed into Series.Query
    */
-  public static sum(column: string): () => Aggregate {
+  public static sum(column: string): () => Aggregate<number> {
     return this.reduce((sum, pt) => sum + pt.get(column, 0), 0);
   }
 
@@ -634,7 +663,7 @@ export class TSDB {
    * all columns, or you can pass a column to only count points that have
    * that column.
    */
-  public static count(column = '*'): () => Aggregate {
+  public static count(column = '*'): () => Aggregate<number> {
     return this.reduce((sum, pt) => {
       if (column === '*' || pt.get(column) !== undefined) {
         return sum + 1;
@@ -646,7 +675,11 @@ export class TSDB {
   /**
    * Creates a new grouper based on time intervals.
    */
-  public static interval(interval: number, fill = true, now: number = Date.now()): Group {
+  public static interval(
+    interval: number,
+    fill = true,
+    now: number = Date.now(),
+  ): Group<IIntervalGroup> {
     return new IntervalGrouper(interval, fill, now);
   }
 }
