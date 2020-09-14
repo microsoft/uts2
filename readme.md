@@ -1,4 +1,4 @@
-# μts [![Build Status](https://travis-ci.org/mixer/uts.svg?branch=master)](https://travis-ci.org/mixer/uts) ![npm](https://img.shields.io/npm/dt/uts.svg) ![npm bundle size](https://img.shields.io/bundlephobia/minzip/uts.svg)
+# μts ![Tests](https://github.com/microsoft/uts/workflows/Run%20Tests/badge.svg?branch=main) ![npm bundle size](https://img.shields.io/bundlephobia/minzip/uts.svg)
 
 μts is a miniature time-series database utility suitable for embedded or frontend web applications, weighing in at about 1.5 KB minified and gzipped.
 
