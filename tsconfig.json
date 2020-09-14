@@ -1,15 +1,20 @@
-
 {
     "compilerOptions": {
-        "module": "commonjs",
-        "noImplicitAny": true,
-        "target": "es5",
-        "lib": [
-            "dom",
-            "es6"
-        ]
+      "module": "commonjs",
+      "target": "es2017",
+      "lib": ["es2017", "dom"],
+      "declaration": true,
+      "noImplicitAny": true,
+      "noImplicitThis": true,
+      "sourceMap": true,
+      "outDir": "./dist",
+      "strict": true,
+      "noUnusedLocals": true,
+      "experimentalDecorators": true,
+      "alwaysStrict": true,
+      "resolveJsonModule": true,
+      "esModuleInterop": true,
+      "types": ["mocha"]
     },
-    "exclude": [
-        "node_modules"
-    ]
-}
+    "include": ["src"]
+  }
