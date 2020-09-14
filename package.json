@@ -1,6 +1,6 @@
 {
   "name": "uts2",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "description": "Microscopic time series database for Node and the browser",
   "main": "dist/uts.js",
   "scripts": {
