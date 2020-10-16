@@ -314,11 +314,11 @@ export class Series {
   }): (pt: Point) => boolean {
     const fns = Object.keys(cmp).reduce((allFns, col) => {
       let comparators = cmp[col];
-      if (!Array.isArray(cmp[col])) {
-        comparators = [<Comparator>comparators];
+      if (!Array.isArray(comparators)) {
+        comparators = [comparators];
       }
 
-      const cmpFns = (<Comparator[]>comparators).map(comp => {
+      const cmpFns = comparators.map(comp => {
         const comparator = comp.is;
         const value = comp.than;
 
